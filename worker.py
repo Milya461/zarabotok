@@ -125,7 +125,7 @@ return start, end
 
 async def handle_message(env, message):
 chat_id = str(message["chat"]["id"])
-text = message.get("text”, "").strip()
+text = message.get("text", "").strip()
 
 if not text:
     return
