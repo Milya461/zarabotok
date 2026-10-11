@@ -5,4 +5,4 @@ compatibility_flags = ["python_workers", "disable_python_external_sdk"]
 [[d1_databases]]
 binding = "DB"
 database_name = "zarabotok-db"
-database_id = "998b01d2-aa7d-478d-bef8-2ec73a0aad93
+database_id = "998b01d2-aa7d-478d-bef8-2ec73a0aad93"
