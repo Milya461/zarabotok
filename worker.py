@@ -53,7 +53,8 @@ async def send_message(env, chat_id, text):
 
     if response.status >= 400 or not result.get("ok", False):
         error_description = result.get(
-            "description", "Неизвестная ошибка Telegram API"
+            "description",
+            "Неизвестная ошибка Telegram API",
         )
         raise RuntimeError(
             f"Telegram sendMessage error: HTTP {response.status}; "
@@ -206,7 +207,10 @@ async def handle_message(env, message):
 
     if command == "/today":
         count, amount, earned = await totals(
-            env, chat_id, today_s, today_s
+            env,
+            chat_id,
+            today_s,
+            today_s,
         )
 
         await send_message(
@@ -221,7 +225,10 @@ async def handle_message(env, message):
 
     if command == "/month":
         count, amount, earned = await totals(
-            env, chat_id, month_start, month_end
+            env,
+            chat_id,
+            month_start,
+            month_end,
         )
 
         await send_message(
@@ -347,7 +354,10 @@ async def handle_message(env, message):
         )
 
     _, _, daily_earned = await totals(
-        env, chat_id, today_s, today_s
+        env,
+        chat_id,
+        today_s,
+        today_s,
     )
 
     await send_message(
@@ -381,10 +391,12 @@ class Default(WorkerEntrypoint):
             return Response.new("OK")
 
         except Exception as exc:
+            error_text = traceback.format_exc()
+
             print("WORKER ERROR:", repr(exc))
-            print(traceback.format_exc())
+            print(error_text)
 
             return Response.new(
-                "Internal error",
+                "ERROR: " + repr(exc) + "\n" + error_text,
                 to_js({"status": 500}),
             )
