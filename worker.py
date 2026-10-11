@@ -12,7 +12,7 @@ return datetime.now(timezone.utc) + timedelta(hours=3)
 
 async def send_message(env, chat_id, text):
 token = env.TELEGRAM_BOT_TOKEN
-url = f”https://api.telegram.org/bot{token}/sendMessage”
+url = f"https://api.telegram.org/bot{token}/sendMessage"
 
 payload = {
     "chat_id": chat_id,
@@ -28,7 +28,7 @@ await fetch(
 )
 
 async def db_init(env):
-await env.DB.prepare(”””
+await env.DB.prepare("""
 CREATE TABLE IF NOT EXISTS services (
 id INTEGER PRIMARY KEY AUTOINCREMENT,
 chat_id TEXT NOT NULL,
@@ -38,7 +38,7 @@ amount REAL NOT NULL,
 earned REAL NOT NULL,
 rate INTEGER NOT NULL
 )
-“””).run()
+""").run()
 
 await env.DB.prepare("""
     CREATE TABLE IF NOT EXISTS payments (
@@ -91,7 +91,7 @@ for line in text.splitlines():
 return items
 
 async def totals(env, chat_id, start, end):
-result = await env.DB.prepare(”””
+result = await env.DB.prepare("""                            
 SELECT
 COUNT(*) AS cnt,
 COALESCE(SUM(amount), 0) AS amount,
@@ -100,7 +100,7 @@ FROM services
 WHERE chat_id = ?
 AND service_date >= ?
 AND service_date <= ?
-“””).bind(
+""").bind(
 str(chat_id), start, end
 ).all()
 
@@ -124,8 +124,8 @@ day=calendar.monthrange(today.year, today.month)[1]
 return start, end
 
 async def handle_message(env, message):
-chat_id = str(message[“chat”][“id”])
-text = message.get(“text”, “”).strip()
+chat_id = str(message["chat"]["id"])
+text = message.get("text”, "").strip()
 
 if not text:
     return
@@ -288,9 +288,9 @@ await send_message(
 
 class Default(WorkerEntrypoint):
 async def fetch(self, request):
-if request.method != “POST”:
+if request.method != "POST":
 return Response.new(
-“Zarabotok bot is running”
+"Zarabotok bot is running"
 )
 
     try:
