@@ -1,3 +1,4 @@
+
 import re
 import json
 import calendar
@@ -476,7 +477,7 @@ async def handle_message(env, message):
         return
 
     if command == "/today":
-        count, amount, earned = await totals(
+        count, _, earned = await totals(
             env,
             chat_id,
             today_s,
@@ -488,13 +489,12 @@ async def handle_message(env, message):
             chat_id,
             f"Сегодня 🐾\n"
             f"Записей услуг: {count}\n"
-            f"Стоимость услуг: {amount:.2f} ₽\n"
             f"Твой заработок: {earned:.2f} ₽",
         )
         return
 
     if command == "/month":
-        count, amount, earned = await totals(
+        count, _, earned = await totals(
             env,
             chat_id,
             month_start,
@@ -506,7 +506,6 @@ async def handle_message(env, message):
             chat_id,
             f"Месяц: {today.strftime('%m.%Y')}\n"
             f"Записей услуг: {count}\n"
-            f"Стоимость услуг: {amount:.2f} ₽\n"
             f"Твой заработок: {earned:.2f} ₽",
         )
         return
@@ -514,7 +513,7 @@ async def handle_message(env, message):
     if command == "/period":
         start, end = current_period(today)
 
-        count, amount, earned = await totals(
+        count, _, earned = await totals(
             env,
             chat_id,
             start.isoformat(),
@@ -526,7 +525,6 @@ async def handle_message(env, message):
             chat_id,
             f"Период: {start:%d.%m}–{end:%d.%m}\n"
             f"Записей услуг: {count}\n"
-            f"Стоимость услуг: {amount:.2f} ₽\n"
             f"Твой заработок: {earned:.2f} ₽",
         )
         return
