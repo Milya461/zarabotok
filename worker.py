@@ -4,14 +4,14 @@ import calendar
 import traceback
 from datetime import datetime, timezone, timedelta
 
-from js import fetch, Response
-from pyodide.ffi import to_js, to_py
+from js import fetch, Response, JSON
+from pyodide.ffi import to_js
 from workers import WorkerEntrypoint
 
 
 HELP_TEXT = (
     "Учёт заработка грумера 🐾\n\n"
-    "Отправляй услуги с ценами — каждая с новой строки.\n\n"
+    "Отправляй услуги с ценами, по одной на строку.\n\n"
     "Правила расчёта:\n"
     "• Стрижка, гигиена, колтуны и дополнительные услуги — 35%\n"
     "• Когти и параанальные железы — 100%\n"
@@ -29,6 +29,11 @@ HELP_TEXT = (
 
 def now_local():
     return datetime.now(timezone.utc) + timedelta(hours=3)
+
+
+def js_to_python(value):
+    """Преобразует JavaScript-объект в обычные Python-данные."""
+    return json.loads(str(JSON.stringify(value)))
 
 
 async def send_message(env, chat_id, text):
@@ -101,9 +106,12 @@ def parse_services(text):
         if not line:
             continue
 
-        # Поддерживаем несколько услуг в одной строке,
-        # разделённых точкой с запятой.
-        parts = line.split(";")
+        # Поддерживаем услуги через точку с запятой
+        # и через запятую между названиями услуг.
+        parts = re.split(
+            r";|,(?=\s*[^\d,;]+?\s+\d)",
+            line,
+        )
 
         for part in parts:
             part = part.strip()
@@ -137,10 +145,7 @@ def parse_services(text):
 
             if re.search(r"когт|когот", name):
                 rate = 100
-            elif re.search(
-                r"парааналь|параанал|желез",
-                name,
-            ):
+            elif re.search(r"парааналь|параанал|желез", name):
                 rate = 100
             elif re.search(r"чаев|типс", name):
                 rate = 100
@@ -175,9 +180,9 @@ async def totals(env, chat_id, start, end):
         end,
     ).all()
 
-    # В Python Workers ответ D1 может быть JavaScript-объектом.
-    # Преобразуем его в обычные Python-словари и списки.
-    result = to_py(raw_result)
+    # D1 возвращает JavaScript-объекты.
+    # Сериализация устраняет ошибку JsProxy при чтении полей.
+    result = js_to_python(raw_result)
     row = result["results"][0]
 
     return (
@@ -348,9 +353,7 @@ async def handle_message(env, message):
             "Когти 300\n"
             "Уши 300\n"
             "Зубы 300\n"
-            "Чаевые 500\n\n"
-            "Несколько услуг в одной строке можно разделить "
-            "точкой с запятой.",
+            "Чаевые 500",
         )
         return
 
@@ -422,12 +425,10 @@ class Default(WorkerEntrypoint):
             return Response.new("OK")
 
         except Exception as exc:
-            error_text = traceback.format_exc()
-
             print("WORKER ERROR:", repr(exc))
-            print(error_text)
+            print(traceback.format_exc())
 
             return Response.new(
-                "ERROR: " + repr(exc) + "\n" + error_text,
+                "Internal Server Error",
                 to_js({"status": 500}),
             )
