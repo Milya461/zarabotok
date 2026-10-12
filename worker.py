@@ -1,4 +1,3 @@
-
 import re
 import json
 import calendar
@@ -6,12 +5,18 @@ import traceback
 from datetime import datetime, timezone, timedelta
 
 from js import fetch, Response
-from pyodide.ffi import to_js
+from pyodide.ffi import to_js, to_py
 from workers import WorkerEntrypoint
 
 
 HELP_TEXT = (
     "Учёт заработка грумера 🐾\n\n"
+    "Отправляй услуги с ценами — каждая с новой строки.\n\n"
+    "Правила расчёта:\n"
+    "• Стрижка, гигиена, колтуны и дополнительные услуги — 35%\n"
+    "• Когти и параанальные железы — 100%\n"
+    "• Чаевые — 100%\n"
+    "• Уши и зубы — 35%\n\n"
     "Команды:\n"
     "/today — заработок за сегодня\n"
     "/month — заработок за месяц\n"
@@ -91,12 +96,22 @@ def parse_services(text):
     items = []
 
     for line in text.splitlines():
-        for part in re.split(r"[,;]", line):
+        line = line.strip()
+
+        if not line:
+            continue
+
+        # Поддерживаем несколько услуг в одной строке,
+        # разделённых точкой с запятой.
+        parts = line.split(";")
+
+        for part in parts:
             part = part.strip()
 
             match = re.search(
-                r"(\d[\d ]*(?:[.,]\d{1,2})?)\s*$",
+                r"(\d[\d ]*(?:[.,]\d{1,2})?)\s*(?:₽|руб\.?)?\s*$",
                 part,
+                re.IGNORECASE,
             )
 
             if not match:
@@ -108,7 +123,11 @@ def parse_services(text):
                 .replace(",", ".")
             )
 
-            amount = float(amount_text)
+            try:
+                amount = float(amount_text)
+            except ValueError:
+                continue
+
             description = part[:match.start()].strip()
 
             if not description or amount <= 0:
@@ -141,7 +160,7 @@ def parse_services(text):
 
 
 async def totals(env, chat_id, start, end):
-    result = await env.DB.prepare("""
+    raw_result = await env.DB.prepare("""
         SELECT
             COUNT(*) AS cnt,
             COALESCE(SUM(amount), 0) AS amount,
@@ -156,7 +175,10 @@ async def totals(env, chat_id, start, end):
         end,
     ).all()
 
-    row = result.results[0]
+    # В Python Workers ответ D1 может быть JavaScript-объектом.
+    # Преобразуем его в обычные Python-словари и списки.
+    result = to_py(raw_result)
+    row = result["results"][0]
 
     return (
         int(row["cnt"]),
@@ -182,10 +204,11 @@ def current_period(today):
 
 
 async def handle_message(env, message):
-    chat_id = str(message["chat"]["id"])
+    chat = message.get("chat", {})
+    chat_id = str(chat.get("id", ""))
     text = message.get("text", "").strip()
 
-    if not text:
+    if not chat_id or not text:
         return
 
     today = now_local().date()
@@ -318,8 +341,16 @@ async def handle_message(env, message):
         await send_message(
             env,
             chat_id,
-            "Не смогла распознать услуги и цены.\n"
-            "Пример: Шпиц стрижка 3200",
+            "Не смогла распознать услуги и цены.\n\n"
+            "Пример:\n"
+            "Шпиц стрижка 3200\n"
+            "Колтуны 500\n"
+            "Когти 300\n"
+            "Уши 300\n"
+            "Зубы 300\n"
+            "Чаевые 500\n\n"
+            "Несколько услуг в одной строке можно разделить "
+            "точкой с запятой.",
         )
         return
 
