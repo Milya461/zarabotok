@@ -11,15 +11,12 @@ from workers import WorkerEntrypoint
 
 HELP_TEXT = (
     "Учёт заработка грумера 🐾\n\n"
-    "Отправляй услуги комплекса и дополнения к нему, по одной на строку.\n\n"
-    "После этого я спрошу, были ли дополнительные услуги отдельно.\n\n"
     "Команды:\n"
     "/today — заработок за сегодня\n"
     "/month — заработок за месяц\n"
     "/period — текущий зарплатный период\n"
     "/pay 15000 — записать выплату\n"
-    "/help — помощь\n\n"
-    "Указывай фактически оплаченную сумму."
+    "/help — помощь"
 )
 
 
@@ -389,6 +386,67 @@ async def handle_message(env, message):
         await send_message(env, chat_id, HELP_TEXT)
         return
 
+    # Скрытая команда для установки даты незавершённого визита.
+    # Формат: /date 2026-10-11
+    if command == "/date":
+        match = re.fullmatch(
+            r"/date(?:@\w+)?\s+(\d{4}-\d{2}-\d{2})",
+            text,
+        )
+
+        if not match:
+            await send_message(
+                env,
+                chat_id,
+                "Укажи дату в формате ГГГГ-ММ-ДД, например: "
+                "/date 2026-10-11",
+            )
+            return
+
+        try:
+            service_date = datetime.strptime(
+                match.group(1),
+                "%Y-%m-%d",
+            ).date().isoformat()
+        except ValueError:
+            await send_message(
+                env,
+                chat_id,
+                "Не получилось распознать дату. "
+                "Используй формат ГГГГ-ММ-ДД.",
+            )
+            return
+
+        pending = await get_pending_visit(env, chat_id)
+
+        if not pending:
+            await send_message(
+                env,
+                chat_id,
+                "Нет незавершённого визита, для которого можно "
+                "изменить дату.",
+            )
+            return
+
+        await save_pending_visit(
+            env,
+            chat_id,
+            service_date,
+            pending["items"],
+        )
+
+        date_display = datetime.strptime(
+            service_date,
+            "%Y-%m-%d",
+        ).strftime("%d.%m.%Y")
+
+        await send_message(
+            env,
+            chat_id,
+            f"Дата визита установлена: {date_display}.",
+        )
+        return
+
     if command == "/today":
         count, amount, earned = await totals(
             env,
@@ -565,14 +623,8 @@ async def handle_message(env, message):
         env,
         chat_id,
         "Записала услуги комплекса 🐾\n\n"
-        "Были дополнительные услуги отдельно от комплекса?\n"
-        "Отправь их по одной на строку, например:\n"
-        "Когти 700\n"
-        "Парааналки 300\n"
-        "Уши 300\n\n"
-        "Если дополнительных услуг не было, ответь «Нет».\n\n"
-        "Пока визит не попадёт в итоговые суммы, "
-        "пока ты не ответишь.",
+        "Были дополнительные услуги отдельно от комплекса?\n\n"
+        "Если дополнительных услуг не было, ответь «Нет».",
     )
 
 
