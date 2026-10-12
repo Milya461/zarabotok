@@ -314,11 +314,6 @@ async def finish_visit(env, chat_id, service_date, items):
 
     await delete_pending_visit(env, chat_id)
 
-    total_earned = round(
-        sum(float(item["earned"]) for item in items),
-        2,
-    )
-
     lines = [
         f'{item["description"]}: '
         f'{float(item["amount"]):.2f} ₽ → '
@@ -344,8 +339,6 @@ async def finish_visit(env, chat_id, service_date, items):
         chat_id,
         "Записала визит 🐾\n\n"
         + "\n".join(lines)
-        + f"\n\nЗаработок с этого визита: "
-        f"{total_earned:.2f} ₽"
         + f"\nВсего за день ({date_display}): "
         f"{daily_earned:.2f} ₽",
     )
@@ -436,8 +429,7 @@ async def handle_message(env, message):
         )
         return
 
-    # Новое: распознаём отдельное сообщение с датой ДД.ММ.ГГГГ.
-    # Например: 03.10.2026
+    # Распознаём отдельное сообщение с датой ДД.ММ.ГГГГ.
     if re.fullmatch(r"\d{2}\.\d{2}\.\d{4}", text):
         pending = await get_pending_visit(env, chat_id)
 
