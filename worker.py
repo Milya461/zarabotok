@@ -11,7 +11,8 @@ from workers import WorkerEntrypoint
 
 HELP_TEXT = (
     "Учёт заработка грумера 🐾\n\n"
-    "Отправляй услуги с ценами, по одной на строку.\n\n"
+    "Отправляй услуги комплекса и дополнения к нему, по одной на строку.\n\n"
+    "После этого я спрошу, были ли дополнительные услуги отдельно.\n\n"
     "Команды:\n"
     "/today — заработок за сегодня\n"
     "/month — заработок за месяц\n"
@@ -91,12 +92,19 @@ async def db_init(env):
         )
     """).run()
 
-    # Храним обработанные Telegram update_id.
-    # Один update_id может быть записан только один раз.
     await env.DB.prepare("""
         CREATE TABLE IF NOT EXISTS processed_updates (
             update_id INTEGER PRIMARY KEY,
             processed_at TEXT NOT NULL
+        )
+    """).run()
+
+    # Незавершённые визиты хранятся отдельно от итоговых услуг.
+    await env.DB.prepare("""
+        CREATE TABLE IF NOT EXISTS pending_visits (
+            chat_id TEXT PRIMARY KEY,
+            service_date TEXT NOT NULL,
+            services_json TEXT NOT NULL
         )
     """).run()
 
@@ -105,7 +113,7 @@ async def claim_update(env, update_id):
     """
     Регистрирует Telegram update_id.
     True — сообщение новое.
-    False — это повторная доставка уже зарегистрированного сообщения.
+    False — повторная доставка уже обработанного update.
     """
     result = await env.DB.prepare("""
         INSERT OR IGNORE INTO processed_updates (
@@ -130,7 +138,15 @@ async def claim_update(env, update_id):
     return int(changes) > 0
 
 
-def parse_services(text):
+def parse_services(text, mode="extra"):
+    """
+    mode='complex':
+        Все позиции первого сообщения — 35%.
+
+    mode='extra':
+        Когти, параанальные железы и чаевые — 100%.
+        Остальные услуги — 35%.
+    """
     items = []
 
     for line in text.splitlines():
@@ -139,8 +155,6 @@ def parse_services(text):
         if not line:
             continue
 
-        # Поддерживаем услуги через точку с запятой
-        # и через запятую между названиями услуг.
         parts = re.split(
             r";|,(?=\s*[^\d,;]+?\s+\d)",
             line,
@@ -176,7 +190,9 @@ def parse_services(text):
 
             name = description.lower()
 
-            if re.search(r"когт|когот", name):
+            if mode == "complex":
+                rate = 35
+            elif re.search(r"когт|когот", name):
                 rate = 100
             elif re.search(r"парааналь|параанал|желез", name):
                 rate = 100
@@ -187,14 +203,79 @@ def parse_services(text):
 
             earned = round(amount * rate / 100, 2)
 
-            items.append((
+            items.append({
+                "description": description,
+                "amount": amount,
+                "earned": earned,
+                "rate": rate,
+            })
+
+    return items
+
+
+async def get_pending_visit(env, chat_id):
+    result = await env.DB.prepare("""
+        SELECT service_date, services_json
+        FROM pending_visits
+        WHERE chat_id = ?
+    """).bind(str(chat_id)).first()
+
+    if not result:
+        return None
+
+    data = js_to_python(result)
+
+    return {
+        "service_date": data["service_date"],
+        "items": json.loads(data["services_json"]),
+    }
+
+
+async def save_pending_visit(env, chat_id, service_date, items):
+    await env.DB.prepare("""
+        INSERT INTO pending_visits (
+            chat_id,
+            service_date,
+            services_json
+        )
+        VALUES (?, ?, ?)
+        ON CONFLICT(chat_id) DO UPDATE SET
+            service_date = excluded.service_date,
+            services_json = excluded.services_json
+    """).bind(
+        str(chat_id),
+        service_date,
+        json.dumps(items, ensure_ascii=False),
+    ).run()
+
+
+async def delete_pending_visit(env, chat_id):
+    await env.DB.prepare("""
+        DELETE FROM pending_visits
+        WHERE chat_id = ?
+    """).bind(str(chat_id)).run()
+
+
+async def insert_service_items(env, chat_id, service_date, items):
+    for item in items:
+        await env.DB.prepare("""
+            INSERT INTO services (
+                chat_id,
+                service_date,
                 description,
                 amount,
                 earned,
-                rate,
-            ))
-
-    return items
+                rate
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+        """).bind(
+            str(chat_id),
+            service_date,
+            item["description"],
+            item["amount"],
+            item["earned"],
+            item["rate"],
+        ).run()
 
 
 async def totals(env, chat_id, start, end):
@@ -237,6 +318,50 @@ def current_period(today):
         )
 
     return start, end
+
+
+async def finish_visit(env, chat_id, service_date, items):
+    """
+    Сохраняет весь визит, удаляет черновик и показывает итог.
+    """
+    await insert_service_items(
+        env,
+        chat_id,
+        service_date,
+        items,
+    )
+
+    await delete_pending_visit(env, chat_id)
+
+    total_earned = round(
+        sum(float(item["earned"]) for item in items),
+        2,
+    )
+
+    lines = [
+        f'{item["description"]}: '
+        f'{float(item["amount"]):.2f} ₽ → '
+        f'{float(item["earned"]):.2f} ₽ '
+        f'({int(item["rate"])}%)'
+        for item in items
+    ]
+
+    _, _, daily_earned = await totals(
+        env,
+        chat_id,
+        service_date,
+        service_date,
+    )
+
+    await send_message(
+        env,
+        chat_id,
+        "Записала визит 🐾\n\n"
+        + "\n".join(lines)
+        + f"\n\nЗаработок с этого визита: "
+        f"{total_earned:.2f} ₽"
+        + f"\nВсего за день: {daily_earned:.2f} ₽",
+    )
 
 
 async def handle_message(env, message):
@@ -371,68 +496,83 @@ async def handle_message(env, message):
         )
         return
 
-    items = parse_services(text)
+    # Если бот уже ждёт дополнительные услуги для визита.
+    pending = await get_pending_visit(env, chat_id)
+
+    if pending:
+        if text.lower() in (
+            "нет",
+            "не было",
+            "нету",
+            "без доп",
+            "без дополнительных",
+        ):
+            await finish_visit(
+                env,
+                chat_id,
+                pending["service_date"],
+                pending["items"],
+            )
+            return
+
+        extra_items = parse_services(text, mode="extra")
+
+        if not extra_items:
+            await send_message(
+                env,
+                chat_id,
+                "Напиши дополнительные услуги с ценами "
+                "по одной на строку или ответь «Нет», "
+                "если их не было.",
+            )
+            return
+
+        all_items = pending["items"] + extra_items
+
+        await finish_visit(
+            env,
+            chat_id,
+            pending["service_date"],
+            all_items,
+        )
+        return
+
+    # Первое сообщение: все услуги комплекса и дополнения к нему — 35%.
+    items = parse_services(text, mode="complex")
 
     if not items:
         await send_message(
             env,
             chat_id,
             "Не смогла распознать услуги и цены.\n\n"
-            "Пример:\n"
-            "Шпиц стрижка 3200\n"
-            "Колтуны 500\n"
-            "Когти 300\n"
-            "Уши 300\n"
-            "Зубы 300\n"
-            "Чаевые 500",
+            "Отправь услуги комплекса и дополнения к нему, "
+            "по одной на строку.\n"
+            "Например:\n"
+            "Кавалер 3000\n"
+            "Зубы 450\n"
+            "Парааналки 300",
         )
         return
 
-    lines = []
-    total_earned = 0
-
-    for description, amount, earned, rate in items:
-        await env.DB.prepare("""
-            INSERT INTO services (
-                chat_id,
-                service_date,
-                description,
-                amount,
-                earned,
-                rate
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-        """).bind(
-            chat_id,
-            today_s,
-            description,
-            amount,
-            earned,
-            rate,
-        ).run()
-
-        total_earned += earned
-
-        lines.append(
-            f"{description}: {amount:.2f} ₽ → "
-            f"{earned:.2f} ₽ ({rate}%)"
-        )
-
-    _, _, daily_earned = await totals(
+    await save_pending_visit(
         env,
         chat_id,
         today_s,
-        today_s,
+        items,
     )
 
     await send_message(
         env,
         chat_id,
-        "Записала 🐾\n\n"
-        + "\n".join(lines)
-        + f"\n\nЗаработок с этой записи: "
-        f"{total_earned:.2f} ₽"
-        + f"\nВсего за сегодня: {daily_earned:.2f} ₽",
+        "Записала услуги комплекса 🐾\n\n"
+        "Были дополнительные услуги отдельно от комплекса?\n"
+        "Отправь их по одной на строку, например:\n"
+        "Когти 700\n"
+        "Парааналки 300\n"
+        "Уши 300\n\n"
+        "Если дополнительных услуг не было, ответь «Нет».\n\n"
+        "Пока визит не попадёт в итоговые суммы, "
+        "пока ты не ответишь.",
     )
 
 
