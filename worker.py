@@ -91,6 +91,44 @@ async def db_init(env):
         )
     """).run()
 
+    # Храним обработанные Telegram update_id.
+    # Один update_id может быть записан только один раз.
+    await env.DB.prepare("""
+        CREATE TABLE IF NOT EXISTS processed_updates (
+            update_id INTEGER PRIMARY KEY,
+            processed_at TEXT NOT NULL
+        )
+    """).run()
+
+
+async def claim_update(env, update_id):
+    """
+    Регистрирует Telegram update_id.
+    True — сообщение новое.
+    False — это повторная доставка уже зарегистрированного сообщения.
+    """
+    result = await env.DB.prepare("""
+        INSERT OR IGNORE INTO processed_updates (
+            update_id,
+            processed_at
+        )
+        VALUES (?, ?)
+    """).bind(
+        int(update_id),
+        now_local().isoformat(),
+    ).run()
+
+    data = js_to_python(result)
+    meta = data.get("meta", {})
+    changes = meta.get("changes")
+
+    if changes is None:
+        raise RuntimeError(
+            "Не удалось проверить результат регистрации update_id"
+        )
+
+    return int(changes) > 0
+
 
 def parse_services(text):
     items = []
@@ -175,8 +213,6 @@ async def totals(env, chat_id, start, end):
         end,
     ).all()
 
-    # D1 возвращает JavaScript-объекты.
-    # Сериализация устраняет ошибку JsProxy при чтении полей.
     result = js_to_python(raw_result)
     row = result["results"][0]
 
@@ -415,6 +451,19 @@ class Default(WorkerEntrypoint):
                 return Response.new("OK")
 
             await db_init(self.env)
+
+            update_id = update.get("update_id")
+
+            if update_id is not None:
+                is_new = await claim_update(
+                    self.env,
+                    update_id,
+                )
+
+                if not is_new:
+                    # Повторная доставка: ничего не записываем.
+                    return Response.new("OK")
+
             await handle_message(self.env, message)
 
             return Response.new("OK")
