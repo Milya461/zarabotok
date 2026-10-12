@@ -1,4 +1,3 @@
-
 import re
 import json
 import calendar
@@ -335,7 +334,6 @@ async def finish_visit(env, chat_id, service_date, items):
         service_date,
     )
 
-    # Дата берётся из самого визита, а не из сегодняшнего дня.
     date_display = datetime.strptime(
         service_date,
         "%Y-%m-%d",
@@ -378,8 +376,7 @@ async def handle_message(env, message):
         await send_message(env, chat_id, HELP_TEXT)
         return
 
-    # Скрытая команда для установки даты незавершённого визита.
-    # Формат: /date 2026-10-11
+    # Установка даты командой /date ГГГГ-ММ-ДД.
     if command == "/date":
         match = re.fullmatch(
             r"/date(?:@\w+)?\s+(\d{4}-\d{2}-\d{2})",
@@ -417,6 +414,53 @@ async def handle_message(env, message):
                 chat_id,
                 "Нет незавершённого визита, для которого можно "
                 "изменить дату.",
+            )
+            return
+
+        await save_pending_visit(
+            env,
+            chat_id,
+            service_date,
+            pending["items"],
+        )
+
+        date_display = datetime.strptime(
+            service_date,
+            "%Y-%m-%d",
+        ).strftime("%d.%m.%Y")
+
+        await send_message(
+            env,
+            chat_id,
+            f"Дата визита установлена: {date_display}.",
+        )
+        return
+
+    # Новое: распознаём отдельное сообщение с датой ДД.ММ.ГГГГ.
+    # Например: 03.10.2026
+    if re.fullmatch(r"\d{2}\.\d{2}\.\d{4}", text):
+        pending = await get_pending_visit(env, chat_id)
+
+        if not pending:
+            await send_message(
+                env,
+                chat_id,
+                "Нет незавершённого визита, для которого можно "
+                "изменить дату.",
+            )
+            return
+
+        try:
+            service_date = datetime.strptime(
+                text,
+                "%d.%m.%Y",
+            ).date().isoformat()
+        except ValueError:
+            await send_message(
+                env,
+                chat_id,
+                "Не получилось распознать дату. "
+                "Напиши её в формате ДД.ММ.ГГГГ.",
             )
             return
 
@@ -587,7 +631,7 @@ async def handle_message(env, message):
         )
         return
 
-    # Первое сообщение: все услуги комплекса и дополнения к нему — 35%.
+    # Первое сообщение: услуги комплекса и дополнения к нему — 35%.
     items = parse_services(text, mode="complex")
 
     if not items:
