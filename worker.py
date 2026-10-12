@@ -1,3 +1,4 @@
+
 import re
 import json
 import calendar
@@ -96,7 +97,6 @@ async def db_init(env):
         )
     """).run()
 
-    # Незавершённые визиты хранятся отдельно от итоговых услуг.
     await env.DB.prepare("""
         CREATE TABLE IF NOT EXISTS pending_visits (
             chat_id TEXT PRIMARY KEY,
@@ -107,11 +107,6 @@ async def db_init(env):
 
 
 async def claim_update(env, update_id):
-    """
-    Регистрирует Telegram update_id.
-    True — сообщение новое.
-    False — повторная доставка уже обработанного update.
-    """
     result = await env.DB.prepare("""
         INSERT OR IGNORE INTO processed_updates (
             update_id,
@@ -136,14 +131,6 @@ async def claim_update(env, update_id):
 
 
 def parse_services(text, mode="extra"):
-    """
-    mode='complex':
-        Все позиции первого сообщения — 35%.
-
-    mode='extra':
-        Когти, параанальные железы и чаевые — 100%.
-        Остальные услуги — 35%.
-    """
     items = []
 
     for line in text.splitlines():
@@ -318,9 +305,7 @@ def current_period(today):
 
 
 async def finish_visit(env, chat_id, service_date, items):
-    """
-    Сохраняет весь визит, удаляет черновик и показывает итог.
-    """
+    """Сохраняет визит и показывает итог с датой визита."""
     await insert_service_items(
         env,
         chat_id,
@@ -350,6 +335,12 @@ async def finish_visit(env, chat_id, service_date, items):
         service_date,
     )
 
+    # Дата берётся из самого визита, а не из сегодняшнего дня.
+    date_display = datetime.strptime(
+        service_date,
+        "%Y-%m-%d",
+    ).strftime("%d.%m.%Y")
+
     await send_message(
         env,
         chat_id,
@@ -357,7 +348,8 @@ async def finish_visit(env, chat_id, service_date, items):
         + "\n".join(lines)
         + f"\n\nЗаработок с этого визита: "
         f"{total_earned:.2f} ₽"
-        + f"\nВсего за день: {daily_earned:.2f} ₽",
+        + f"\nВсего за день ({date_display}): "
+        f"{daily_earned:.2f} ₽",
     )
 
 
@@ -653,7 +645,6 @@ class Default(WorkerEntrypoint):
                 )
 
                 if not is_new:
-                    # Повторная доставка: ничего не записываем.
                     return Response.new("OK")
 
             await handle_message(self.env, message)
